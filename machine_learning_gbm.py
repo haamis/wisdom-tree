@@ -1,18 +1,15 @@
 import gzip, json, sys
 from itertools import repeat
+from random import shuffle
 import lightgbm as lgb
 import matplotlib.pyplot as plt
-from numpy.core.numeric import zeros_like
-from numpy.lib.function_base import append
 import scipy
 import numpy as np
 import pandas as pd
-from pandas.core.arrays.sparse.dtype import SparseDtype
 from pandas.core.base import DataError
-from scipy.sparse.csr import csr_matrix
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder
-from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.model_selection import train_test_split, GridSearchCV, PredefinedSplit
 
 # Ordinal encode:
 # Sign, Class, ActionSkill, ReactionSkill, SupportSkill, MoveSkill, Mainhand, Offhand, Head, Armor, Accessory, Abilities
@@ -155,13 +152,20 @@ print(ability_data.shape)
 
 input_data = scipy.sparse.hstack((skill_data, ability_data)).astype('float')
 
+# Saving that memory.
+del new_ability_data
+del one_hots
+del skill_data
+del ability_data
+del data
+
 #skill_df = pd.DataFrame(data=skill_data, dtype='category') # SparseDtype()
 #skill_df = pd.DataFrame.astype(skill_df, dtype=SparseDtype('category'))
 #skill_df = pd.concat((skill_df, ability_one_hot), axis=1, ignore_index=True)
 # print([x for x in skill_df.iloc[0]])
 #print(skill_df.iloc[0][18])
 
-# train_df, valid_df, train_winners, valid_winners = train_test_split(input_data, winner_data, test_size=0.1)
+train_df, valid_df, train_winners, valid_winners = train_test_split(input_data, winner_data, test_size=0.1)
 
 # Don't treat any brave or faith values as categorical variables. This line is maybe too cute.
 #categorical_features = [x for x in range(len(skill_data[0])) if x not in set( [ (n*15)+3 for n in range(8) ] + [ (n*15)+4 for n in range(8) ] )]
@@ -214,42 +218,79 @@ for team in ('t1','t2'):
 
 feature_labels = feature_labels + ability_names
 
-# train_data = lgb.Dataset(train_df, label=train_winners, feature_name=feature_labels, free_raw_data=True) #categorical_feature=categorical_features,
+# Small shit adds up yo.
+del ability_names
 
-#print(train_data.get_data())
-#print(train_data.get_data().iloc[0])
-# validation_data = train_data.create_valid(valid_df, label=valid_winners)
+train_data = lgb.Dataset(train_df, label=train_winners, feature_name=feature_labels, free_raw_data=True) #categorical_feature=categorical_features,
+
+validation_data = train_data.create_valid(valid_df, label=valid_winners)
 
 
 # print("Paused.."); input()
 
-# param = {}
-# param['num_leaves'] = 5
-# param['objective'] = 'binary'
-# param['metric'] = ['average_precision', 'binary']#, 'binary_error', 'l2']
-# param['learning_rate'] = 0.1
-# # param['boosting'] = 'dart'
-# # param['drop_rate'] = 0.9
-# # param['max_drop'] = -1
-# # param['is_unbalance'] = True
-# param['extra_trees'] = True
-# param['path_smooth'] = 1_000_000
-# param['feature_fraction'] = 0.1
-# param['cat_smooth'] = 0.0 # don't smooth categorical variables
-# # param['min_data_in_leaf'] = 2
-# # param['max_depth'] = 5
-# # param['max_bin'] = 8
-# param['num_threads'] = 6
-# # param['bin_construct_sample_cnt'] = 100000
-# # param['min_data_in_bin'] = 10000
+# params = {
+#     'num_leaves': [15],
+#     'learning_rate': [0.1, 0.05, 0.01],
+#     'extra_trees': [True],
+#     'path_smooth': [10000, 100000],
+#     'feature_fraction': [0.1, 0.5, 1.0],
+#     'cat_smooth': [0.0, 1.0, 10.0],
+#     'n_estimators': [10000]
+# }
 
-# num_round = 10000
-# bst = lgb.train(param, train_data, num_round, categorical_feature=[0] + [x for x in range(25,3073)], valid_names=['val', 'train'], valid_sets=[validation_data, train_data])
+# sample_num = input_data.shape[0]
+# indices = [-1 for _ in range(sample_num-sample_num//5)] + [0 for _ in range(sample_num//5)]
+# ps = PredefinedSplit(test_fold=indices)
 
+# #indices = repeat((train_indices, valid_indices))
 
+# clf = lgb.LGBMClassifier(objective='binary', n_jobs=6)
+# gcv = GridSearchCV(clf, params, verbose=4, cv=ps, return_train_score=True, scoring='accuracy', n_jobs=1, pre_dispatch=4)
+# gcv.fit(input_data, winner_data, categorical_feature=[0] + [x for x in range(25,3073)], feature_name=feature_labels)
 
+# print(gcv.best_params_)
+# print(gcv.best_score_)
+
+param = {}
+param['num_leaves'] = 15
+param['objective'] = 'binary'
+param['metric'] = ['average_precision', 'binary']#, 'binary_error', 'l2']
+param['learning_rate'] = 1.0
+# param['boosting'] = 'dart'
+# param['drop_rate'] = 0.9
+# param['max_drop'] = -1
+# param['is_unbalance'] = True
+param['extra_trees'] = True
+param['path_smooth'] = 1_000_000
+param['feature_fraction'] = 0.1
+param['cat_smooth'] = 1.0 # don't smooth categorical variables
+# param['min_data_in_leaf'] = 2
+# param['max_depth'] = 5 # 4 needs more testing with num_leaves 15
+# param['max_bin'] = 8
+param['num_threads'] = 6
+# param['bin_construct_sample_cnt'] = 100000
+# param['min_data_in_bin'] = 10000
+
+num_round = 10000
+bst = lgb.train(param, train_data, num_round, categorical_feature=[0] + [x for x in range(25,3073)], valid_names=['val', 'train'], valid_sets=[validation_data, train_data])
 
 lgb.plot_importance(bst, figsize=(20,35), importance_type='gain', max_num_features=100)
+#lgb.plot_importance(gcv.best_estimator_, figsize=(20,35), importance_type='gain', max_num_features=100)
 plt.savefig("importance.svg")
 lgb.plot_tree(bst, figsize=(80,80))
+# lgb.plot_tree(gcv.best_estimator_, figsize=(80,80))
 plt.savefig("tree.svg")
+
+# with open('gcv', 'bw') as out_f:
+#     import pickle
+    # pickle.dump(gcv, out_f)
+
+# 1000 iter grid search best result:
+# {'cat_smooth': 10.0, 'extra_trees': True, 'feature_fraction': 0.5, 'learning_rate': 0.1, 'n_estimators': 1000, 'num_leaves': 15, 'path_smooth': 10000}
+# score: 0.6121004835475882
+
+# 10000 iter grid search best result:
+# {'cat_smooth': 1.0, 'extra_trees': True, 'feature_fraction': 1.0, 'learning_rate': 0.05, 'n_estimators': 10000, 'num_leaves': 15, 'path_smooth': 100000}
+# score: 0.6146951291425876
+
+# 663544 with cat_smooth 1.0

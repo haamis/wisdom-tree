@@ -2,3 +2,5 @@
 *.txt.gz
 *.txt
 *.svg
+1000_estimator_gcv
+10000_estimator_gcv
