@@ -4,3 +4,6 @@
 *.svg
 1000_estimator_gcv
 10000_estimator_gcv
+train.bin
+val.bin
+gcv
